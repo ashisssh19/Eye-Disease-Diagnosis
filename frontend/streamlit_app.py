@@ -109,11 +109,15 @@ def main():
 
             if uploaded_file is not None:
                 image = Image.open(uploaded_file)
-                st.image(image, caption='Uploaded Image.', use_column_width=True)
+                # Resize the image while maintaining aspect ratio
+                max_size = (400, 400)
+                image.thumbnail(max_size)
+                st.image(image, caption='Uploaded Image.', use_column_width=False)
 
                 if st.button('Predict', key="predict_button"):
                     if patient_id:
-                        result = predict(uploaded_file, patient_id)
+                        with st.spinner('Processing...'):
+                            result = predict(uploaded_file, patient_id)
                         if result:
                             st.success(f"Predicted disease: {result['disease']}")
                             st.info(f"Confidence: {result['confidence']:.2f}")
@@ -127,7 +131,8 @@ def main():
             history_patient_id = st.text_input("Enter Patient ID to view history")
             if st.button("View History", key="history_button"):
                 if history_patient_id:
-                    history = get_patient_history(history_patient_id)
+                    with st.spinner('Fetching history...'):
+                        history = get_patient_history(history_patient_id)
                     if history:
                         for item in history:
                             st.write(f"File: {item['filename']}")
