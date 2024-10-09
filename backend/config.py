@@ -18,7 +18,7 @@ class Config:
     ALLOWED_EXTENSIONS = {'png', 'jpg', 'jpeg'}
 
     # Model configuration
-    MODEL_PATH = BASE_DIR / 'model' / 'vgg16_fp_scans_final_model_finetuned.h5'
+    MODEL_PATH = BASE_DIR / 'model' / 'vgg16_fp_scans_final_model_finetuned.keras'
 
     # Debug mode
     DEBUG = False  # Set to False in production
