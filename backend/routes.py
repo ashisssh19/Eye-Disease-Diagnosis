@@ -9,9 +9,6 @@ from pathlib import Path
 import logging
 import tensorflow as tf
 from config import Config
-from flask import request, jsonify, current_app
-import os
-from werkzeug.utils import secure_filename
 from typing import Dict, List, Optional, Union, Any
 
 # Configure logging
