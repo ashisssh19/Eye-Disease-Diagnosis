@@ -4,33 +4,33 @@ from pathlib import Path
 import tensorflow as tf
 import numpy as np
 from PIL import Image
-import sys
-from pathlib import Path
 
 # Add the parent directory to the Python path
 sys.path.append(str(Path(__file__).resolve().parent.parent))
 
 from backend.config import Config
 
-
 def test_model():
     try:
-        # Initialize config
+        # Initialize config and make sure directories exist
         Config.init_app()
 
         # Load model
-        model = tf.keras.models.load_model(Config.MODEL_PATH)
-        print(f"Model loaded successfully from {Config.MODEL_PATH}")
+        model_path = Config.MODEL_PATH
+        if not model_path.exists():
+            raise FileNotFoundError(f"Model file not found at {model_path}")
+
+        model = tf.keras.models.load_model(model_path)
+        print(f"Model loaded successfully from {model_path}")
 
         # Test prediction with dummy input
-        dummy_input = np.random.rand(1, 224, 224, 3)
+        dummy_input = np.random.rand(1, 224, 224, 3).astype(np.float32)
         prediction = model.predict(dummy_input)
         print(f"Model prediction shape: {prediction.shape}")
 
         # Load and preprocess a test image if available
-        test_image_path = os.path.join(os.path.dirname(Config.MODEL_PATH), 'test_image.jpg')
-        if os.path.exists(test_image_path):
-            # Open and convert image to numpy array
+        test_image_path = model_path.parent / 'test_image.jpg'
+        if test_image_path.exists():
             with Image.open(test_image_path) as img:
                 img = img.convert('RGB')
                 img = img.resize((224, 224))
@@ -47,7 +47,6 @@ def test_model():
     except Exception as e:
         print(f"Error testing model: {str(e)}")
         return False
-
 
 if __name__ == "__main__":
     success = test_model()

@@ -1,40 +1,50 @@
 import os
+import sys
+from pathlib import Path
+import tensorflow as tf
 import numpy as np
 from PIL import Image
-from tensorflow.keras.preprocessing.image import img_to_array
-from config import Config
 
+# Add the parent directory to the Python path
+sys.path.append(str(Path(__file__).resolve().parent.parent))
 
-def allowed_file(filename):
-    return '.' in filename and filename.rsplit('.', 1)[1].lower() in Config.ALLOWED_EXTENSIONS
+from backend.config import Config
 
-
-def preprocess_image(filepath, target_size=(224, 224)):
+def test_model():
     try:
-        with Image.open(filepath) as img:
-            img = img.convert('RGB')
-            img = img.resize(target_size)
-            img_array = img_to_array(img)
-            img_array = np.expand_dims(img_array, axis=0)
-            img_array = img_array / 255.0  # Normalize pixel values
+        # Initialize config
+        Config.init_app()
 
-            # Log image array shape for debugging
-            print(f"Processed image shape: {img_array.shape}")
+        # Load model
+        model = tf.keras.models.load_model(Config.MODEL_PATH)
+        print(f"Model loaded successfully from {Config.MODEL_PATH}")
 
-        return img_array
+        # Test prediction with dummy input
+        dummy_input = np.random.rand(1, 224, 224, 3)
+        prediction = model.predict(dummy_input)
+        print(f"Model prediction shape: {prediction.shape}")
+
+        # Load and preprocess a test image if available
+        test_image_path = os.path.join(os.path.dirname(Config.MODEL_PATH), 'test_image.jpg')
+        if os.path.exists(test_image_path):
+            # Open and convert image to numpy array
+            with Image.open(test_image_path) as img:
+                img = img.convert('RGB')
+                img = img.resize((224, 224))
+                img_array = np.array(img, dtype=np.float32) / 255.0
+                img_array = np.expand_dims(img_array, axis=0)
+
+            # Make prediction with the image
+            test_prediction = model.predict(img_array)
+            print(f"Test image prediction shape: {test_prediction.shape}")
+        else:
+            print(f"Test image not found at {test_image_path}")
+
+        return True
     except Exception as e:
-        print(f"Error preprocessing image: {str(e)}")
-        return None
+        print(f"Error testing model: {str(e)}")
+        return False
 
-
-def get_prediction(model, image):
-    try:
-        prediction = model.predict(image)
-
-        # Log prediction output for debugging
-        print(f"Prediction output: {prediction}")
-
-        return prediction
-    except Exception as e:
-        print(f"Error during prediction: {str(e)}")
-        return None
+if __name__ == "__main__":
+    success = test_model()
+    print(f"Model test {'successful' if success else 'failed'}")

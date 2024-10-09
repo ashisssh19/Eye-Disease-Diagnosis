@@ -43,8 +43,10 @@ def signup(username, email, password):
 
 
 def predict(file, patient_id):
-    files = {"file": file}
+    # Convert the file to bytes and send it via API to the Flask backend
+    files = {"file": file.getvalue()}  # Using `getvalue()` to pass the file in bytes
     data = {"patient_id": patient_id}
+
     response = requests.post(f"{API_URL}/predict", files=files, data=data)
     if response.status_code == 200:
         return response.json()
@@ -147,7 +149,6 @@ def main():
                         with st.spinner('Processing...'):
                             result = predict(uploaded_file, patient_id)
                         if result:
-                            # Check if the 'disease' key is in the result
                             if 'disease' in result:
                                 st.success(f"Predicted disease: {result['disease']}")
                             else:
@@ -168,8 +169,7 @@ def main():
                     if history:
                         for item in history:
                             st.write(f"File: {item['filename']}")
-                            st.write(
-                                f"Prediction: {item['prediction']['disease']} (Confidence: {item['prediction']['confidence']:.2f})")
+                            st.write(f"Prediction: {item['prediction']['disease']}")
                             st.write("---")
                     else:
                         st.info("No history found for this patient.")

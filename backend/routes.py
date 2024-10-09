@@ -8,12 +8,15 @@ import re
 from pathlib import Path
 import logging
 import tensorflow as tf
+from config import Config
+from flask import request, jsonify, current_app
+import os
+from werkzeug.utils import secure_filename
 from typing import Dict, List, Optional, Union, Any
 
 # Configure logging
 route_logger = logging.getLogger(__name__)
 
-# Disease classes - update these according to your model's classes
 DISEASE_CLASSES = [
     'Normal',
     'Cataract',
@@ -21,13 +24,12 @@ DISEASE_CLASSES = [
     'Diabetic Retinopathy'
 ]
 
-
 def init_routes(app: Any, db: Any) -> Any:
     users_collection = db['users']
     patient_history_collection = db['patient_history']
 
-    def allowed_file(filename: str) -> bool:
-        return '.' in filename and filename.rsplit('.', 1)[1].lower() in app.config['ALLOWED_EXTENSIONS']
+    def allowed_file(filename):
+        return '.' in filename and filename.rsplit('.', 1)[1].lower() in Config.ALLOWED_EXTENSIONS
 
     def validate_email(email: str) -> bool:
         pattern = r'^[\w\.-]+@[\w\.-]+\.\w+$'
@@ -48,18 +50,30 @@ def init_routes(app: Any, db: Any) -> Any:
             route_logger.error(f"Error preprocessing image: {str(e)}")
             return None
 
-    def get_prediction(preprocessed_image: np.ndarray) -> Optional[Dict[str, Any]]:
+    def get_prediction(preprocessed_image: np.ndarray) -> str:
         try:
+            if current_app.model is None:
+                raise ValueError("Model is not loaded.")
+
             predictions = current_app.model.predict(preprocessed_image)
+
+            if not isinstance(predictions, np.ndarray):
+                route_logger.error(f"Unexpected prediction type: {type(predictions)}")
+                raise ValueError("Model prediction has unexpected type")
+
+            if len(predictions.shape) != 2 or predictions.shape[1] != len(DISEASE_CLASSES):
+                route_logger.error(f"Unexpected prediction shape: {predictions.shape}")
+                raise ValueError("Model prediction has unexpected shape")
+
             predicted_class_index = np.argmax(predictions[0])
             predicted_disease = DISEASE_CLASSES[predicted_class_index]
 
-            return {
-                "disease": predicted_disease
-            }
+            route_logger.info(f"Prediction successful: {predicted_disease}")
+
+            return predicted_disease
         except Exception as e:
             route_logger.error(f"Error during prediction: {str(e)}")
-            return None
+            raise
 
     @app.route('/test_upload', methods=['POST'])
     def test_upload():
@@ -88,6 +102,8 @@ def init_routes(app: Any, db: Any) -> Any:
                     'file_exists': file_exists,
                     'file_size': file_size
                 }), 200
+            else:
+                return jsonify({'error': 'File type not allowed'}), 400
         except Exception as e:
             route_logger.error(f"Error in test upload: {str(e)}")
             return jsonify({'error': str(e)}), 500
@@ -105,31 +121,42 @@ def init_routes(app: Any, db: Any) -> Any:
             return jsonify({'error': 'File type not allowed'}), 400
 
         try:
+            # Secure and save the file
             filename = secure_filename(file.filename)
             filepath = Path(app.config['UPLOAD_FOLDER']) / filename
-            file.save(filepath)
 
+            # Save the file using a string path for compatibility
+            file.save(str(filepath))
+
+            # Preprocess the image
             preprocessed_image = preprocess_image(filepath)
             if preprocessed_image is None:
                 return jsonify({'error': 'Error processing image'}), 500
 
-            prediction_result = get_prediction(preprocessed_image)
-            if prediction_result is None:
-                return jsonify({'error': 'Error making prediction'}), 500
-
-            patient_id = request.form.get('patient_id')
-            if patient_id:
-                # Log patient ID if needed, but not required to save in DB for now
-                route_logger.info(f"Received prediction request for Patient ID: {patient_id}")
+            # Perform prediction
+            predicted_disease = get_prediction(preprocessed_image)
 
             return jsonify({
                 'success': True,
-                'prediction': prediction_result
+                'prediction': predicted_disease
             }), 200
 
         except Exception as e:
+            # Log the error during the prediction process
             route_logger.error(f"Error during prediction process: {str(e)}")
-            return jsonify({'error': 'Internal server error during prediction'}), 500
+            return jsonify({
+                'error': 'Internal server error during prediction',
+                'details': str(e)
+            }), 500
+
+        finally:
+            if 'filepath' in locals():
+                try:
+                    # Remove the file after processing
+                    os.remove(filepath)
+                except Exception as e:
+                    # Log any errors that occur during file removal
+                    route_logger.error(f"Error removing temporary file: {str(e)}")
 
     @app.route('/signup', methods=['POST'])
     def signup():
@@ -195,17 +222,5 @@ def init_routes(app: Any, db: Any) -> Any:
         except Exception as e:
             route_logger.error(f"Error fetching patient history: {str(e)}")
             return jsonify({'error': 'Error fetching patient history'}), 500
-
-    @app.route('/health', methods=['GET'])
-    def health_check():
-        if not hasattr(current_app, 'model') or current_app.model is None:
-            return jsonify({
-                'status': 'error',
-                'message': 'Model not loaded'
-            }), 500
-        return jsonify({
-            'status': 'healthy',
-            'message': 'Service is running and model is loaded'
-        }), 200
 
     return app
