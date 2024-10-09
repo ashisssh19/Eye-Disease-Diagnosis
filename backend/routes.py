@@ -52,24 +52,10 @@ def init_routes(app: Any, db: Any) -> Any:
         try:
             predictions = current_app.model.predict(preprocessed_image)
             predicted_class_index = np.argmax(predictions[0])
-            confidence = float(predictions[0][predicted_class_index])
             predicted_disease = DISEASE_CLASSES[predicted_class_index]
 
-            top_3_indices = np.argsort(predictions[0])[-3:][::-1]
-            top_3_predictions = [
-                {
-                    "disease": DISEASE_CLASSES[idx],
-                    "confidence": float(predictions[0][idx])
-                }
-                for idx in top_3_indices
-            ]
-
             return {
-                "primary_prediction": {
-                    "disease": predicted_disease,
-                    "confidence": confidence
-                },
-                "all_predictions": top_3_predictions
+                "disease": predicted_disease
             }
         except Exception as e:
             route_logger.error(f"Error during prediction: {str(e)}")
@@ -133,11 +119,8 @@ def init_routes(app: Any, db: Any) -> Any:
 
             patient_id = request.form.get('patient_id')
             if patient_id:
-                patient_history_collection.insert_one({
-                    'patient_id': patient_id,
-                    'filename': filename,
-                    'prediction': prediction_result
-                })
+                # Log patient ID if needed, but not required to save in DB for now
+                route_logger.info(f"Received prediction request for Patient ID: {patient_id}")
 
             return jsonify({
                 'success': True,

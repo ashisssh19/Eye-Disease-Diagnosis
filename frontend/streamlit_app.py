@@ -148,9 +148,8 @@ def main():
                             result = predict(uploaded_file, patient_id)
                         if result:
                             # Check if the 'disease' key is in the result
-                            if 'disease' in result and 'confidence' in result:
+                            if 'disease' in result:
                                 st.success(f"Predicted disease: {result['disease']}")
-                                st.info(f"Confidence: {result['confidence']:.2f}")
                             else:
                                 st.error("Prediction result is incomplete. Please check the model output.")
                         else:
