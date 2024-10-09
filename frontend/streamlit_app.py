@@ -1,11 +1,22 @@
+import os
 import streamlit as st
 import requests
 from PIL import Image
-import io
 import extra_streamlit_components as stx
+import sys
+from pathlib import Path
+
+# Add the parent directory to the Python path
+sys.path.append(str(Path(__file__).resolve().parent.parent))
+
+from backend.config import Config
 
 # Set the page config first
 st.set_page_config(page_title="Eye Disease Diagnosis", layout="wide")
+
+# Ensure the upload folder exists
+if not os.path.exists(Config.UPLOAD_FOLDER):
+    os.makedirs(Config.UPLOAD_FOLDER)
 
 API_URL = "http://localhost:5000"
 
@@ -16,17 +27,20 @@ try:
 except FileNotFoundError:
     st.warning("Custom styles not found. Using default styles.")
 
+
 def login(username, password):
     response = requests.post(f"{API_URL}/login", json={"username": username, "password": password})
     if response.status_code == 200:
         return response.json()
     return None
 
+
 def signup(username, email, password):
     response = requests.post(f"{API_URL}/signup", json={"username": username, "email": email, "password": password})
     if response.status_code == 201:
         return response.json()
     return None
+
 
 def predict(file, patient_id):
     files = {"file": file}
@@ -36,15 +50,18 @@ def predict(file, patient_id):
         return response.json()
     return None
 
+
 def get_patient_history(patient_id):
     response = requests.get(f"{API_URL}/patient_history/{patient_id}")
     if response.status_code == 200:
         return response.json()
     return []
 
+
 if 'logged_in' not in st.session_state:
     st.session_state.logged_in = False
     st.session_state.user_id = None
+
 
 def main():
     if not st.session_state.logged_in:
@@ -83,7 +100,7 @@ def main():
 
         # About Us section
         st.markdown('<div id="about-us">', unsafe_allow_html=True)
-        st.markdown("""
+        st.markdown(""" 
             ### About Us
             **Easy Optha** is an innovative platform designed to assist eye specialists in diagnosing complex eye diseases such as cataract, glaucoma, and diabetic retinopathy using cutting-edge machine learning and image analysis techniques. 
             Our mission is to provide healthcare professionals with reliable, fast, and precise diagnostic tools, improving patient care and outcomes.
@@ -108,23 +125,39 @@ def main():
             uploaded_file = st.file_uploader("Choose an image...", type=["jpg", "jpeg", "png"])
 
             if uploaded_file is not None:
-                image = Image.open(uploaded_file)
-                # Resize the image while maintaining aspect ratio
-                max_size = (400, 400)
-                image.thumbnail(max_size)
-                st.image(image, caption='Uploaded Image.', use_column_width=False)
+                # Save the uploaded file to a designated path
+                uploaded_file_path = os.path.join(Config.UPLOAD_FOLDER, uploaded_file.name)
+
+                # Open and write the uploaded file
+                with open(uploaded_file_path, "wb") as f:
+                    f.write(uploaded_file.getbuffer())
+
+                # Attempt to open the saved image for inspection
+                try:
+                    with Image.open(uploaded_file_path) as img:
+                        # Resize the image while maintaining aspect ratio
+                        max_size = (400, 400)
+                        img.thumbnail(max_size)
+                        st.image(img, caption='Uploaded Image.', use_column_width=False)  # Preview image
+                except Exception as e:
+                    st.error(f"Error opening saved image: {str(e)}")  # Show error in the Streamlit app
 
                 if st.button('Predict', key="predict_button"):
                     if patient_id:
                         with st.spinner('Processing...'):
                             result = predict(uploaded_file, patient_id)
                         if result:
-                            st.success(f"Predicted disease: {result['disease']}")
-                            st.info(f"Confidence: {result['confidence']:.2f}")
+                            # Check if the 'disease' key is in the result
+                            if 'disease' in result and 'confidence' in result:
+                                st.success(f"Predicted disease: {result['disease']}")
+                                st.info(f"Confidence: {result['confidence']:.2f}")
+                            else:
+                                st.error("Prediction result is incomplete. Please check the model output.")
                         else:
                             st.error("Error in prediction. Please try again.")
                     else:
                         st.warning("Please enter a Patient ID before predicting.")
+
 
         elif choice == "Patient History":
             st.subheader("Patient History")
@@ -136,7 +169,8 @@ def main():
                     if history:
                         for item in history:
                             st.write(f"File: {item['filename']}")
-                            st.write(f"Prediction: {item['prediction']['disease']} (Confidence: {item['prediction']['confidence']:.2f})")
+                            st.write(
+                                f"Prediction: {item['prediction']['disease']} (Confidence: {item['prediction']['confidence']:.2f})")
                             st.write("---")
                     else:
                         st.info("No history found for this patient.")
@@ -147,6 +181,7 @@ def main():
             st.session_state.logged_in = False
             st.session_state.user_id = None
             st.rerun()
+
 
 if __name__ == "__main__":
     main()
