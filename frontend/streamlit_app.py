@@ -43,14 +43,19 @@ def signup(username, email, password):
 
 
 def predict(file, patient_id):
-    # Convert the file to bytes and send it via API to the Flask backend
-    files = {"file": file.getvalue()}  # Using `getvalue()` to pass the file in bytes
+    files = {"file": file}
     data = {"patient_id": patient_id}
 
-    response = requests.post(f"{API_URL}/predict", files=files, data=data)
-    if response.status_code == 200:
-        return response.json()
-    return None
+    try:
+        response = requests.post(f"{API_URL}/predict", files=files, data=data)
+        if response.status_code == 200:
+            return response.json()
+        else:
+            st.error(f"Error: {response.json().get('error', 'Unknown error')}")
+            return None
+    except requests.RequestException as e:
+        st.error(f"Network error: {str(e)}")
+        return None
 
 
 def get_patient_history(patient_id):
@@ -144,21 +149,23 @@ def main():
                 except Exception as e:
                     st.error(f"Error opening saved image: {str(e)}")  # Show error in the Streamlit app
 
-                if st.button('Predict', key="predict_button"):
+                if st.button('Predict'):
                     if patient_id:
                         with st.spinner('Processing...'):
-                            result = predict(uploaded_file, patient_id)
-                        if result:
-                            if 'disease' in result:
-                                st.success(f"Predicted disease: {result['disease']}")
-                            else:
-                                st.error("Prediction result is incomplete. Please check the model output.")
-                        else:
-                            st.error("Error in prediction. Please try again.")
+                            try:
+                                result = predict(uploaded_file, patient_id)
+                                if result:
+                                    st.success(f"Predicted disease: {result['disease']}")
+                                    st.write("Probabilities:")
+                                    for disease, prob in result['probabilities'].items():
+                                        st.progress(prob)
+                                        st.write(f"{disease}: {prob:.2%}")
+                                else:
+                                    st.error("Prediction failed. Please try again.")
+                            except Exception as e:
+                                st.error(f"An error occurred during prediction: {str(e)}")
                     else:
                         st.warning("Please enter a Patient ID before predicting.")
-
-
         elif choice == "Patient History":
             st.subheader("Patient History")
             history_patient_id = st.text_input("Enter Patient ID to view history")

@@ -7,6 +7,7 @@ from PIL import Image
 import re
 from pathlib import Path
 import logging
+import datetime
 import tensorflow as tf
 from config import Config
 from typing import Dict, List, Optional, Union, Any
@@ -15,10 +16,10 @@ from typing import Dict, List, Optional, Union, Any
 route_logger = logging.getLogger(__name__)
 
 DISEASE_CLASSES = [
-    'Normal',
     'Cataract',
+    'Diabetic Retinopathy',
     'Glaucoma',
-    'Diabetic Retinopathy'
+    'Normal'
 ]
 
 def init_routes(app: Any, db: Any) -> Any:
@@ -32,45 +33,28 @@ def init_routes(app: Any, db: Any) -> Any:
         pattern = r'^[\w\.-]+@[\w\.-]+\.\w+$'
         return re.match(pattern, email) is not None
 
-    def preprocess_image(filepath: Union[str, Path]) -> Optional[np.ndarray]:
+    def preprocess_image(filepath):
         try:
-            if not os.path.exists(filepath):
-                route_logger.error(f"File not found: {filepath}")
-                return None
-
-            with Image.open(filepath) as img:
-                img = img.convert('RGB')
-                img = img.resize((224, 224))
-                img_array = np.array(img, dtype=np.float32) / 255.0
-                return np.expand_dims(img_array, axis=0)
+            route_logger.info(f"Preprocessing image at {filepath}")
+            image = Image.open(filepath)
+            image = image.resize((224, 224))  # Adjusted image resizing
+            image_array = np.array(image)
+            image_array = np.expand_dims(image_array, axis=0)
+            return image_array
         except Exception as e:
-            route_logger.error(f"Error preprocessing image: {str(e)}")
+            route_logger.error(f"Error in preprocess_image: {str(e)}")
             return None
 
-    def get_prediction(preprocessed_image: np.ndarray) -> str:
+    def get_prediction(preprocessed_image):
         try:
-            if current_app.model is None:
-                raise ValueError("Model is not loaded.")
-
-            predictions = current_app.model.predict(preprocessed_image)
-
-            if not isinstance(predictions, np.ndarray):
-                route_logger.error(f"Unexpected prediction type: {type(predictions)}")
-                raise ValueError("Model prediction has unexpected type")
-
-            if len(predictions.shape) != 2 or predictions.shape[1] != len(DISEASE_CLASSES):
-                route_logger.error(f"Unexpected prediction shape: {predictions.shape}")
-                raise ValueError("Model prediction has unexpected shape")
-
-            predicted_class_index = np.argmax(predictions[0])
-            predicted_disease = DISEASE_CLASSES[predicted_class_index]
-
-            route_logger.info(f"Prediction successful: {predicted_disease}")
-
-            return predicted_disease
+            route_logger.info("Running model prediction...")
+            predictions = app.model.predict(preprocessed_image)
+            predicted_label = np.argmax(predictions, axis=1)[0]
+            route_logger.info(f"Prediction result: {predicted_label}")
+            return predicted_label
         except Exception as e:
-            route_logger.error(f"Error during prediction: {str(e)}")
-            raise
+            route_logger.error(f"Error in get_prediction: {str(e)}")
+            return None
 
     @app.route('/test_upload', methods=['POST'])
     def test_upload():
@@ -107,53 +91,77 @@ def init_routes(app: Any, db: Any) -> Any:
 
     @app.route('/predict', methods=['POST'])
     def predict():
-        if 'file' not in request.files:
-            return jsonify({'error': 'No file part'}), 400
-
-        file = request.files['file']
-        if file.filename == '':
-            return jsonify({'error': 'No selected file'}), 400
-
-        if not file or not allowed_file(file.filename):
-            return jsonify({'error': 'File type not allowed'}), 400
+        app.logger.info("Predict route accessed")
 
         try:
-            # Secure and save the file
-            filename = secure_filename(file.filename)
-            filepath = Path(app.config['UPLOAD_FOLDER']) / filename
+            if 'file' not in request.files:
+                app.logger.error("No file part in request")
+                return jsonify({'error': 'No file part'}), 400
 
-            # Save the file using a string path for compatibility
-            file.save(str(filepath))
+            file = request.files['file']
+            patient_id = request.form.get('patient_id')
 
-            # Preprocess the image
-            preprocessed_image = preprocess_image(filepath)
-            if preprocessed_image is None:
-                return jsonify({'error': 'Error processing image'}), 500
+            if file.filename == '':
+                app.logger.error("No selected file")
+                return jsonify({'error': 'No selected file'}), 400
 
-            # Perform prediction
-            predicted_disease = get_prediction(preprocessed_image)
+            if file and allowed_file(file.filename):
+                try:
+                    filename = secure_filename(file.filename)
+                    filepath = os.path.join(app.config['UPLOAD_FOLDER'], filename)
+                    file.save(filepath)
+                    app.logger.info(f"File saved at: {filepath}")
 
-            return jsonify({
-                'success': True,
-                'prediction': predicted_disease
-            }), 200
+                    preprocessed_image = preprocess_image(filepath)
+                    if preprocessed_image is None:
+                        return jsonify({'error': 'Error preprocessing image'}), 500
+
+                    prediction_index = get_prediction(preprocessed_image)
+                    if prediction_index is None:
+                        return jsonify({'error': 'Error making prediction'}), 500
+
+                    # Get prediction probabilities
+                    probabilities = app.model.predict(preprocessed_image)[0]
+
+                    # Create response
+                    prediction_result = {
+                        'disease': DISEASE_CLASSES[prediction_index],
+                        'probabilities': {
+                            class_name: float(prob)
+                            for class_name, prob in zip(DISEASE_CLASSES, probabilities)
+                        }
+                    }
+
+                    # Save to patient history if patient_id provided
+                    if patient_id and hasattr(app, 'patient_history_collection'):
+                        app.patient_history_collection.insert_one({
+                            'patient_id': patient_id,
+                            'filename': filename,
+                            'prediction': prediction_result,
+                            'timestamp': datetime.utcnow()
+                        })
+
+                    return jsonify(prediction_result), 200
+
+                except Exception as e:
+                    app.logger.error(f"Error during prediction process: {str(e)}")
+                    return jsonify({'error': f'Prediction process error: {str(e)}'}), 500
+                finally:
+                    # Clean up - remove the uploaded file
+                    try:
+                        if os.path.exists(filepath):
+                            os.remove(filepath)
+                            app.logger.info(f"Cleaned up file: {filepath}")
+                    except Exception as e:
+                        app.logger.error(f"Error removing temporary file: {str(e)}")
+
+            else:
+                app.logger.error(f"File type not allowed: {file.filename}")
+                return jsonify({'error': 'File type not allowed'}), 400
 
         except Exception as e:
-            # Log the error during the prediction process
-            route_logger.error(f"Error during prediction process: {str(e)}")
-            return jsonify({
-                'error': 'Internal server error during prediction',
-                'details': str(e)
-            }), 500
-
-        finally:
-            if 'filepath' in locals():
-                try:
-                    # Remove the file after processing
-                    os.remove(filepath)
-                except Exception as e:
-                    # Log any errors that occur during file removal
-                    route_logger.error(f"Error removing temporary file: {str(e)}")
+            app.logger.error(f"Unexpected error in predict route: {str(e)}")
+            return jsonify({'error': 'An unexpected error occurred'}), 500
 
     @app.route('/signup', methods=['POST'])
     def signup():
@@ -219,5 +227,39 @@ def init_routes(app: Any, db: Any) -> Any:
         except Exception as e:
             route_logger.error(f"Error fetching patient history: {str(e)}")
             return jsonify({'error': 'Error fetching patient history'}), 500
+
+    @app.route('/health', methods=['GET'])
+    def health_check():
+        try:
+            # Verify model is loaded
+            if not hasattr(app, 'model'):
+                return jsonify({
+                    'status': 'error',
+                    'message': 'Model not loaded'
+                }), 503
+
+            # Check upload directory exists and is writable
+            upload_dir = Path(app.config['UPLOAD_FOLDER'])
+            if not upload_dir.exists() or not os.access(upload_dir, os.W_OK):
+                return jsonify({
+                    'status': 'error',
+                    'message': 'Upload directory not accessible'
+                }), 503
+
+            # Optional: Check database connection
+            if hasattr(app, 'patient_history_collection'):
+                app.patient_history_collection.find_one({})
+
+            return jsonify({
+                'status': 'healthy',
+                'message': 'All systems operational'
+            }), 200
+
+        except Exception as e:
+            app.logger.error(f"Health check failed: {str(e)}")
+            return jsonify({
+                'status': 'error',
+                'message': f'Health check failed: {str(e)}'
+            }), 503
 
     return app
