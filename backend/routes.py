@@ -98,66 +98,74 @@ def init_routes(app: Any, db: Any) -> Any:
                 app.logger.error("No file part in request")
                 return jsonify({'error': 'No file part'}), 400
 
-            file = request.files['file']
+            files = request.files.getlist('file')  # Get list of uploaded files
             patient_id = request.form.get('patient_id')
 
-            if file.filename == '':
-                app.logger.error("No selected file")
-                return jsonify({'error': 'No selected file'}), 400
+            if not files or all(file.filename == '' for file in files):
+                app.logger.error("No selected files")
+                return jsonify({'error': 'No selected files'}), 400
 
-            if file and allowed_file(file.filename):
-                try:
-                    filename = secure_filename(file.filename)
-                    filepath = os.path.join(app.config['UPLOAD_FOLDER'], filename)
-                    file.save(filepath)
-                    app.logger.info(f"File saved at: {filepath}")
+            predictions = []  # List to store predictions for each file
 
-                    preprocessed_image = preprocess_image(filepath)
-                    if preprocessed_image is None:
-                        return jsonify({'error': 'Error preprocessing image'}), 500
-
-                    prediction_index = get_prediction(preprocessed_image)
-                    if prediction_index is None:
-                        return jsonify({'error': 'Error making prediction'}), 500
-
-                    # Get prediction probabilities
-                    probabilities = app.model.predict(preprocessed_image)[0]
-
-                    # Create response
-                    prediction_result = {
-                        'disease': DISEASE_CLASSES[prediction_index],
-                        'probabilities': {
-                            class_name: float(prob)
-                            for class_name, prob in zip(DISEASE_CLASSES, probabilities)
-                        }
-                    }
-
-                    # Save to patient history if patient_id provided
-                    if patient_id and hasattr(app, 'patient_history_collection'):
-                        app.patient_history_collection.insert_one({
-                            'patient_id': patient_id,
-                            'filename': filename,
-                            'prediction': prediction_result,
-                            'timestamp': datetime.utcnow()
-                        })
-
-                    return jsonify(prediction_result), 200
-
-                except Exception as e:
-                    app.logger.error(f"Error during prediction process: {str(e)}")
-                    return jsonify({'error': f'Prediction process error: {str(e)}'}), 500
-                finally:
-                    # Clean up - remove the uploaded file
+            for file in files:
+                if file and allowed_file(file.filename):
                     try:
-                        if os.path.exists(filepath):
-                            os.remove(filepath)
-                            app.logger.info(f"Cleaned up file: {filepath}")
-                    except Exception as e:
-                        app.logger.error(f"Error removing temporary file: {str(e)}")
+                        filename = secure_filename(file.filename)
+                        filepath = os.path.join(app.config['UPLOAD_FOLDER'], filename)
+                        file.save(filepath)
+                        app.logger.info(f"File saved at: {filepath}")
 
-            else:
-                app.logger.error(f"File type not allowed: {file.filename}")
-                return jsonify({'error': 'File type not allowed'}), 400
+                        preprocessed_image = preprocess_image(filepath)
+                        if preprocessed_image is None:
+                            return jsonify({'error': 'Error preprocessing image'}), 500
+
+                        prediction_index = get_prediction(preprocessed_image)
+                        if prediction_index is None:
+                            return jsonify({'error': 'Error making prediction'}), 500
+
+                        # Get prediction probabilities
+                        probabilities = app.model.predict(preprocessed_image)[0]
+
+                        # Create response for the current file
+                        prediction_result = {
+                            'filename': filename,  # Include filename in the result
+                            'disease': DISEASE_CLASSES[prediction_index],
+                            'probabilities': {
+                                class_name: float(prob)
+                                for class_name, prob in zip(DISEASE_CLASSES, probabilities)
+                            }
+                        }
+
+                        # Save to patient history if patient_id provided
+                        if patient_id and hasattr(app, 'patient_history_collection'):
+                            app.patient_history_collection.insert_one({
+                                'patient_id': patient_id,
+                                'filename': filename,
+                                'prediction': prediction_result,
+                                'timestamp': datetime.utcnow()
+                            })
+
+                        predictions.append(prediction_result)  # Add result to the list
+
+                    except Exception as e:
+                        app.logger.error(f"Error during prediction process for {file.filename}: {str(e)}")
+                        predictions.append(
+                            {'filename': file.filename, 'error': f'Prediction process error: {str(e)}'})  # Append error
+
+                    finally:
+                        # Clean up - remove the uploaded file
+                        try:
+                            if os.path.exists(filepath):
+                                os.remove(filepath)
+                                app.logger.info(f"Cleaned up file: {filepath}")
+                        except Exception as e:
+                            app.logger.error(f"Error removing temporary file: {str(e)}")
+
+                else:
+                    app.logger.error(f"File type not allowed: {file.filename}")
+                    predictions.append({'filename': file.filename, 'error': 'File type not allowed'})  # Append error
+
+            return jsonify(predictions), 200  # Return all predictions in a single response
 
         except Exception as e:
             app.logger.error(f"Unexpected error in predict route: {str(e)}")

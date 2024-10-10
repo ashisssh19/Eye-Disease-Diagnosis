@@ -129,41 +129,43 @@ def main():
         if choice == "Upload Scan":
             st.subheader("Upload New Scan")
             patient_id = st.text_input("Patient ID")
-            uploaded_file = st.file_uploader("Choose an image...", type=["jpg", "jpeg", "png"])
+            uploaded_files = st.file_uploader("Choose images...", type=["jpg", "jpeg", "png"], accept_multiple_files=True)
 
-            if uploaded_file is not None:
-                # Save the uploaded file to a designated path
-                uploaded_file_path = os.path.join(Config.UPLOAD_FOLDER, uploaded_file.name)
+            if uploaded_files is not None:
+                for uploaded_file in uploaded_files:
+                    # Save the uploaded file to a designated path
+                    uploaded_file_path = os.path.join(Config.UPLOAD_FOLDER, uploaded_file.name)
 
-                # Open and write the uploaded file
-                with open(uploaded_file_path, "wb") as f:
-                    f.write(uploaded_file.getbuffer())
+                    # Open and write the uploaded file
+                    with open(uploaded_file_path, "wb") as f:
+                        f.write(uploaded_file.getbuffer())
 
-                # Attempt to open the saved image for inspection
-                try:
-                    with Image.open(uploaded_file_path) as img:
-                        # Resize the image while maintaining aspect ratio
-                        max_size = (400, 400)
-                        img.thumbnail(max_size)
-                        st.image(img, caption='Uploaded Image.', use_column_width=False)  # Preview image
-                except Exception as e:
-                    st.error(f"Error opening saved image: {str(e)}")  # Show error in the Streamlit app
+                    # Attempt to open the saved image for inspection
+                    try:
+                        with Image.open(uploaded_file_path) as img:
+                            # Resize the image while maintaining aspect ratio
+                            max_size = (400, 400)
+                            img.thumbnail(max_size)
+                            st.image(img, caption='Uploaded Image.', use_column_width=False)  # Preview image
+                    except Exception as e:
+                        st.error(f"Error opening saved image: {str(e)}")  # Show error in the Streamlit app
 
                 if st.button('Predict'):
                     if patient_id:
                         with st.spinner('Processing...'):
-                            try:
-                                result = predict(uploaded_file, patient_id)
-                                if result:
-                                    st.success(f"Predicted disease: {result['disease']}")
-                                    st.write("Probabilities:")
-                                    for disease, prob in result['probabilities'].items():
-                                        st.progress(prob)
-                                        st.write(f"{disease}: {prob:.2%}")
-                                else:
-                                    st.error("Prediction failed. Please try again.")
-                            except Exception as e:
-                                st.error(f"An error occurred during prediction: {str(e)}")
+                            for uploaded_file in uploaded_files:
+                                try:
+                                    result = predict(uploaded_file, patient_id)
+                                    if result:
+                                        st.success(f"Predicted disease for {uploaded_file.name}: {result['disease']}")
+                                        st.write("Probabilities:")
+                                        for disease, prob in result['probabilities'].items():
+                                            st.progress(prob)
+                                            st.write(f"{disease}: {prob:.2%}")
+                                    else:
+                                        st.error(f"Prediction failed for {uploaded_file.name}. Please try again.")
+                                except Exception as e:
+                                    st.error(f"An error occurred during prediction for {uploaded_file.name}: {str(e)}")
                     else:
                         st.warning("Please enter a Patient ID before predicting.")
         elif choice == "Patient History":
