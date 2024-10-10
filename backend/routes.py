@@ -49,9 +49,10 @@ def init_routes(app: Any, db: Any) -> Any:
         try:
             route_logger.info("Running model prediction...")
             predictions = app.model.predict(preprocessed_image)
+            route_logger.info(f"Raw predictions: {predictions}")
             predicted_label = np.argmax(predictions, axis=1)[0]
             route_logger.info(f"Prediction result: {predicted_label}")
-            return predicted_label
+            return int(predicted_label)
         except Exception as e:
             route_logger.error(f"Error in get_prediction: {str(e)}")
             return None
@@ -92,28 +93,33 @@ def init_routes(app: Any, db: Any) -> Any:
     @app.route('/predict', methods=['POST'])
     def predict():
         app.logger.info("Predict route accessed")
+        app.logger.info(f"Upload folder path: {app.config['UPLOAD_FOLDER']}")
 
         try:
             if 'file' not in request.files:
                 app.logger.error("No file part in request")
                 return jsonify({'error': 'No file part'}), 400
 
-            files = request.files.getlist('file')  # Get list of uploaded files
+            files = request.files.getlist('file')
+            app.logger.info(f"Number of files received: {len(files)}")
+
             patient_id = request.form.get('patient_id')
+            app.logger.info(f"Patient ID: {patient_id}")
 
             if not files or all(file.filename == '' for file in files):
                 app.logger.error("No selected files")
                 return jsonify({'error': 'No selected files'}), 400
 
-            predictions = []  # List to store predictions for each file
+            predictions = []
 
             for file in files:
                 if file and allowed_file(file.filename):
                     try:
                         filename = secure_filename(file.filename)
                         filepath = os.path.join(app.config['UPLOAD_FOLDER'], filename)
+                        app.logger.info(f"Attempting to save file at: {filepath}")
                         file.save(filepath)
-                        app.logger.info(f"File saved at: {filepath}")
+                        app.logger.info(f"File saved successfully at: {filepath}")
 
                         preprocessed_image = preprocess_image(filepath)
                         if preprocessed_image is None:
@@ -123,20 +129,23 @@ def init_routes(app: Any, db: Any) -> Any:
                         if prediction_index is None:
                             return jsonify({'error': 'Error making prediction'}), 500
 
-                        # Get prediction probabilities
-                        probabilities = app.model.predict(preprocessed_image)[0]
+                        try:
+                            prediction_index = int(prediction_index)
+                        except ValueError:
+                            app.logger.error(f"Invalid prediction index for {filename}: {prediction_index}")
+                            return jsonify({'error': 'Invalid prediction index'}), 500
+
+                        # Commenting out the probabilities part
+                        # probabilities = app.model.predict(preprocessed_image)[0]
 
                         # Create response for the current file
                         prediction_result = {
-                            'filename': filename,  # Include filename in the result
-                            'disease': DISEASE_CLASSES[prediction_index],
-                            'probabilities': {
-                                class_name: float(prob)
-                                for class_name, prob in zip(DISEASE_CLASSES, probabilities)
-                            }
+                            'filename': filename,
+                            'disease': DISEASE_CLASSES[prediction_index] if 0 <= prediction_index < len(
+                                DISEASE_CLASSES) else 'Unknown',
+                            # 'probabilities': {class_name: float(prob) for class_name, prob in zip(DISEASE_CLASSES, probabilities)}  # Commented out
                         }
 
-                        # Save to patient history if patient_id provided
                         if patient_id and hasattr(app, 'patient_history_collection'):
                             app.patient_history_collection.insert_one({
                                 'patient_id': patient_id,
@@ -145,27 +154,27 @@ def init_routes(app: Any, db: Any) -> Any:
                                 'timestamp': datetime.utcnow()
                             })
 
-                        predictions.append(prediction_result)  # Add result to the list
+                        predictions.append(prediction_result)
 
                     except Exception as e:
                         app.logger.error(f"Error during prediction process for {file.filename}: {str(e)}")
-                        predictions.append(
-                            {'filename': file.filename, 'error': f'Prediction process error: {str(e)}'})  # Append error
+                        predictions.append({'filename': file.filename, 'error': f'Prediction process error: {str(e)}'})
 
                     finally:
-                        # Clean up - remove the uploaded file
                         try:
                             if os.path.exists(filepath):
                                 os.remove(filepath)
                                 app.logger.info(f"Cleaned up file: {filepath}")
+                            else:
+                                app.logger.warning(f"File not found for cleanup: {filepath}")
                         except Exception as e:
                             app.logger.error(f"Error removing temporary file: {str(e)}")
 
                 else:
                     app.logger.error(f"File type not allowed: {file.filename}")
-                    predictions.append({'filename': file.filename, 'error': 'File type not allowed'})  # Append error
+                    predictions.append({'filename': file.filename, 'error': 'File type not allowed'})
 
-            return jsonify(predictions), 200  # Return all predictions in a single response
+            return jsonify(predictions), 200
 
         except Exception as e:
             app.logger.error(f"Unexpected error in predict route: {str(e)}")

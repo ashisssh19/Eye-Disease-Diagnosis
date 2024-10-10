@@ -157,11 +157,21 @@ def main():
                                 try:
                                     result = predict(uploaded_file, patient_id)
                                     if result:
-                                        st.success(f"Predicted disease for {uploaded_file.name}: {result['disease']}")
-                                        st.write("Probabilities:")
-                                        for disease, prob in result['probabilities'].items():
-                                            st.progress(prob)
-                                            st.write(f"{disease}: {prob:.2%}")
+                                        # st.write(f"Raw response: {result}")  # Commented out raw response
+                                        for prediction in result:  # Iterate through the list of predictions
+                                            if 'disease' in prediction:  # Commented out the condition checking 'probabilities'
+                                                st.success(
+                                                    f"Predicted disease for {prediction['filename']}: {prediction['disease']}")
+
+                                                # Commented out probabilities display
+                                                # st.write("Probabilities:")
+                                                # for disease, prob in prediction['probabilities'].items():
+                                                #     st.progress(float(prob))  # Convert to float to ensure it's a number
+                                                #     st.write(f"{disease}: {prob:.2%}")
+
+                                            else:
+                                                st.error(
+                                                    f"Unexpected response format for {prediction.get('filename', 'unknown file')}")
                                     else:
                                         st.error(f"Prediction failed for {uploaded_file.name}. Please try again.")
                                 except Exception as e:
